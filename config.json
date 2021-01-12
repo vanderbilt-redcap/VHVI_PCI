@@ -1,0 +1,40 @@
+{
+	"name": "VHVI_PCI",
+	"namespace": "Vanderbilt\\VHVI_PCI",
+	"framework-version": 5,
+	"description": "This module allows administrators to create or update records by uploading a CathPCI Excel document.",
+	"documentation": "README.md",
+	"authors": [
+		{
+			"name": "Carl Reed",
+			"email": "datacore@vumc.org",
+			"institution": "Vanderbilt University Medical Center"
+		}
+	],
+	"versions": {
+		"1.0.0": ""
+	},
+	"permissions": [],
+	"enable-every-page-hooks-on-system-pages": false,
+	"links": {
+		"project": [
+				{
+					"name": "CathPCI Workbook Import",
+					"icon": "arrow_right",
+					"url": "cathpci_import.php"
+				}
+			],
+		"control-center": []
+	},
+	"no-auth-pages": [],
+	"project-settings": [
+	],
+	"system-settings": [],
+	"crons": [],
+	"compatibility": {
+		"php-version-min": "7.0.0",
+		"php-version-max": "",
+		"redcap-version-min": "9.1.1",
+		"redcap-version-max": ""
+	}
+}

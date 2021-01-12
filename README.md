@@ -1,2 +1,2 @@
-# VHVI_PCI
-External Module for REDCap that allows administrators to create/update records by uploading a CathPCI workbook
+### VHVI PCI Registry External Module README
+This module allows administrators to create or update records by uploading a CathPCI Excel document.
