@@ -2,6 +2,35 @@
 namespace Vanderbilt\VHVI_PCI;
 
 class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
+	
+	function __construct() {
+		parent::__construct();
+		$vhvi_field_names = \REDCap::getFieldNames();
+	}
+	
+	function uploadedPatientData($pati_data) {
+		
+	}
+	
+	// take a column name and make it redcap variable name compatible (lowercase letters, numbers, underscores only, <= 100 chars)
+	function convertVariableName($cathpci_var_name) {
+		$pci_lower = strtolower($cathpci_var_name);
+		$rc_name = preg_replace('/[^[:digit:][:lower:]_]/', '_', $pci_lower);
+		$rc_name = preg_replace('/_+/', '_', $rc_name);
+		$rc_name = preg_replace('/_$|^_/', '', $rc_name);
+		$rc_name = substr($rc_name, 0, 100);
+		
+		// acs_24_hrs_yes de-deduplicate
+		if ($rc_name == 'acs_24_hrs_yes') {
+			if (strpos($pci_lower, '<=', true) !== false) {
+				$rc_name = 'acs_le_24_hrs_yes';
+			} else {
+				$rc_name = 'acs_gt_24_hrs_yes';
+			}
+		}
+		return $rc_name;
+	}
+	
 	function llog($text) {
 		// allows only local (not test/prod) logging
 		if (!file_exists($this->getModulePath() . 'able_test.php')) {
