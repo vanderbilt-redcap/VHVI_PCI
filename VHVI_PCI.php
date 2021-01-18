@@ -1,87 +1,49 @@
 <?php
 namespace Vanderbilt\VHVI_PCI;
 
+require('vendor/autoload.php');
 class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
+	
+	private $longVarSubstrings = [
+		'health_insurance_payment_source',
+		'lvef_diagnostic_left_heart_cath',
+		'percutaneous_coronary_intervention',
+		'concomitant_procedures_performed',
+		'arterial_access_closure_method',
+		'pre_procedure',
+		'post_procedure',
+		'cardiovascular_instability',
+		'mechanical_ventricular_support',
+		'solid_organ_transplant_type',
+		'intervention_type_this_hospitalization',
+	];
+	
+	private $shortVarSubstrings = [
+		'hi_pay_src',
+		'lvef_diag_lhcath',
+		'pci',
+		'conc_pp',
+		'arterial_ac_method',
+		'prepx',
+		'postpx',
+		'ci',
+		'mech_vent_supp',
+		'sot_type',
+		'int_type',
+	];
 	
 	function __construct() {
 		parent::__construct();
-		$vhvi_field_names = \REDCap::getFieldNames();
-	}
-	
-	function uploadedPatientData($pati_data) {
 		
+		// cache project field names
+		$this->vhvi_field_names = \REDCap::getFieldNames();
 	}
 	
-	// take a column name and make it redcap variable name compatible (lowercase letters, numbers, underscores only, <= 100 chars)
-	function convertVariableName($cathpci_var_name) {
-		$pci_lower = strtolower($cathpci_var_name);
-		$rc_name = preg_replace('/[^[:digit:][:lower:]_]/', '_', $pci_lower);
-		$rc_name = preg_replace('/_+/', '_', $rc_name);
-		$rc_name = preg_replace('/_$|^_/', '', $rc_name);
-		$rc_name = substr($rc_name, 0, 100);
-		
-		// acs_24_hrs_yes de-deduplicate
-		if ($rc_name == 'acs_24_hrs_yes') {
-			if (strpos($pci_lower, '<=', true) !== false) {
-				$rc_name = 'acs_le_24_hrs_yes';
-			} else {
-				$rc_name = 'acs_gt_24_hrs_yes';
-			}
-		}
-		return $rc_name;
-	}
-	
-	function llog($text) {
-		// allows only local (not test/prod) logging
-		if (!file_exists($this->getModulePath() . 'able_test.php')) {
-			return;
-		}
-		
-		// create new file first time this is run, then append for additional calls
-		if (isset($this->ran_llog)) {
-			file_put_contents("C:/vumc/log.txt", "$text\n", FILE_APPEND);
-		} else {
-			$this->ran_llog = true;
-			file_put_contents("C:/vumc/log.txt", "VHVI_PCI llog created: " . date('c') . "\n$text\n");
-		}
-	}
-}
-
-require('vendor/autoload.php');
-// $module = new VHVI_PCI();
-
-class CathPCI {
-	// each field key has an array of column indices that contain field data (or pieces)
-	private $field_column_map = [
-		'last_name' => [0],
-		'last_name' => [1],
-		'mrn' => [3],
-		'gender' => [4],
-		'race' => [5, 6, 7],
-		'hypertension' => [8],
-		'dyslipidemia' => [9],
-		'prior_mi' => [10],
-		'prior_pci' => [11],
-		'height_cm' => [12],
-		'weight_kg' => [13],
-		'cabg' => [16],
-		'diabetes' => [17],
-		'dialysis_current' => [18],
-		'hf' => [19],
-		'lvef_cath' => [20],
-		'access' => [21],
-		'sbp' => [22],
-		'contrast' => [23],
-		'cr_prepx' => [24],
-		'hemoglobin_prepx' => [25],
-		'cr_discharge' => [34],
-		'status_discharge' => [35]
-	];
-	
-	function __construct($workbook_filename) {
+	// returns nothing, loads workbook property (or throw exception)
+	function loadCathPCIWorkbook($workbook_filepath) {
 		// ensure filename for workbook passed in exists
-		if (!file_exists($workbook_filename)) {
-			throw new \Exception("Tried to create a CathPCI instance from non-existing file at: '$workbook_filename'");
+		if (!file_exists($workbook_filepath)) {
+			throw new \Exception("Tried to create a CathPCI instance from non-existing file at: '$workbook_filepath'");
 		}
 		
 		// create PHPSpreadsheet reader
@@ -95,9 +57,9 @@ class CathPCI {
 		
 		// read workbook into mem
 		try {
-			$this->workbook = $reader->load($workbook_filename);
+			$this->workbook = $reader->load($workbook_filepath);
 		} catch(\PhpOffice\PhpSpreadsheet\Reader\Exception $e) {
-			throw new \Exception("Error loading CathPCI workbook from filename '$workbook_filename': " . $e->getMessage());
+			throw new \Exception("Error loading CathPCI workbook from filename '$workbook_filepath': " . $e->getMessage());
 		}
 		
 		if (!$this->workbook) {
@@ -113,7 +75,12 @@ class CathPCI {
 	}
 	
 	// process rows in first worksheet, creating or updating patient records as needed
-	function processRows() {
+	// returns status string
+	function processWorkbook() {
+		// build column-field map
+		$column_name_row_data = $this->sheet->rangeToArray('A4:MF4')[0];
+		$this->buildColumnFieldMap($column_name_row_data);
+		
 		$lastRow = $this->sheet->getHighestRow();
 		if ($lastRow < 5) {
 			return "CathPCI workbook import failure: Expected workbook to have at least 5 rows on first sheet";
@@ -126,21 +93,46 @@ class CathPCI {
 		$returnStatus .= "Detected " . ($lastRow - 5) . " rows of patient data.\n";
 		
 		// for ($row_i = 6; $row_i <= $lastRow; $row_i++) {
-		for ($row_i = 6; $row_i <= 6; $row_i++) {
+		for ($row_i = 6; $row_i <= 10; $row_i++) {
 			$returnStatus .= "Processing row $row_i:\n";
 			$row_data = $this->sheet->rangeToArray('A' . $row_i . ':AK' . $row_i)[0];
 			
 			// fieldify row data
 			$pati_data = $this->rowToPatientData($row_data);
 			
-			$returnStatus .= "\t" . print_r($pati_data, true);
+			// $returnStatus .= "\t" . print_r($pati_data, true);
 		}
 		
 		return $returnStatus;
 	}
 	
+	function buildColumnFieldMap($header_row_data) {
+		if (empty($this->vhvi_field_names)) {
+			throw new \Exception("VHVI PCI module can't build column-field map for workbook until project field names are cached.");
+		}
+		
+		$this->field_map = [];
+		$this->fields_mapped = 0;
+		foreach ($header_row_data as $col_index => $field_name) {
+			if (empty($field_name)) {
+				break;
+			}
+			
+			// convert column name to what the REDCap variable name would be
+			$rc_field_name = $this->convertVariableName($field_name);
+			
+			if (in_array($rc_field_name, $this->vhvi_field_names, true)) {
+				$this->field_map[$col_index] = $rc_field_name;
+				$this->fields_mapped++;
+			} else {
+				// the module is designed to handle field_map being a sparse array
+			}
+		}
+	}
+	
 	function rowToPatientData(&$row_data) {
 		$pati_data = new \stdClass();
+		$pati_data->fields_not_matched = [];
 		foreach ($this->field_column_map as $field_name => &$cols_arr) {
 			if (count($cols_arr) > 1) {
 				foreach ($cols_arr as $col_index) {
@@ -151,5 +143,49 @@ class CathPCI {
 			}
 		}
 		return $pati_data;
+	}
+	
+	function uploadedPatientData($pati_data) {
+		
+	}
+	
+	// take a column name and make it redcap variable name compatible (lowercase letters, numbers, underscores only, <= 100 chars)
+	function convertVariableName($cathpci_var_name) {
+		// 1 lower case
+		$rc_var = strtolower($cathpci_var_name);
+		
+		// 2 encode <=, > to le, gt
+		$rc_var = str_replace("<=", "le", $rc_var);
+		$rc_var = str_replace(">", "gt", $rc_var);
+		
+		// 3 replace non-alphanumeric with underscore
+		$rc_var = preg_replace('/[^[:digit:][:lower:]]/', '_', $rc_var);
+		$rc_var = preg_replace('/_+/', '_', $rc_var);
+		
+		// 4 compress specific substrings
+		$rc_var = str_replace($this->longVarSubstrings, $this->shortVarSubstrings, $rc_var);
+		
+		// 5 trim underscores
+		$rc_var = trim($rc_var, '_');
+		
+		// 6 truncate to 26 chars
+		$rc_var = substr($rc_var, 0, 26);
+		
+		return $rc_var;
+	}
+	
+	function llog($text) {
+		// allows only local (not test/prod) logging
+		if (!file_exists($this->getModulePath() . 'able_test.php')) {
+			return;
+		}
+		
+		// create new file first time this is run, then append for additional calls
+		if (isset($this->ran_llog)) {
+			file_put_contents("C:/vumc/log.txt", "$text\n", FILE_APPEND);
+		} else {
+			$this->ran_llog = true;
+			file_put_contents("C:/vumc/log.txt", "VHVI_PCI llog created: " . date('c') . "\n$text\n");
+		}
 	}
 }
