@@ -92,7 +92,7 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		$this->buildColumnFieldMap($column_name_row_data);
 		
 		// print table showing column to field map
-		$returnStatus .= $this->printFieldMapTable();
+		// $returnStatus .= $this->printFieldMapTable();
 		
 		$lastRow = $this->sheet->getHighestRow();
 		if ($lastRow < $header_row) {
@@ -105,7 +105,7 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		$returnStatus .= "<span>Detected " . ($lastRow - $header_row) . " rows of patient data.</span><br>";
 		
 		// for ($row_i = ($header_row + 1); $row_i <= $lastRow; $row_i++) {
-		for ($row_i = ($header_row + 1); $row_i <= ($header_row + 2); $row_i++) {
+		for ($row_i = ($header_row + 1); $row_i <= ($header_row + 100); $row_i++) {
 			$returnStatus .= "Processing row $row_i: ";
 			$row_data = $this->sheet->rangeToArray("A$row_i:$last_col$row_i")[0];
 			
@@ -113,14 +113,7 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 			$record = $this->rowToPatientData($row_data);
 			
 			// save
-			$results = \REDCap::saveData($this->pid, 'json', json_encode([$record]));
-			if (!empty($results['errors'])) {
-				$errs = implode(' ', $results['errors']);
-				$returnStatus .= "\tREDCap FAILED to save row data to a new record. Errors: " . print_r($errs, true) . "<br>";
-			} else {
-				$returnStatus .= "\tREDCap saved row data to new record. Record ID: " . $record->{$this->getRecordIdField()} . "<br>";
-			}
-			
+			$returnStatus .= $this->savePatientData($record);
 		}
 		
 		$returnStatus .= "<br><h6>Finished processing workbook.</h6><br>";
@@ -202,8 +195,15 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		return $new_patient_record;
 	}
 	
-	function uploadedPatientData($pati_data) {
-		
+	// creates new record, saves to db by prepared INSERT statement
+	function savePatientData($patient_data) {
+		$results = \REDCap::saveData($this->pid, 'json', json_encode([$patient_data]));
+		if (!empty($results['errors'])) {
+			$errs = implode(' ', $results['errors']);
+			return "\tREDCap FAILED to save row data to a new record. Errors: " . print_r($errs, true) . "<br>";
+		} else {
+			return "\tREDCap saved row data to new record. Record ID: " . $patient_data->{$this->getRecordIdField()} . "<br>";
+		}
 	}
 	
 	// take a column name and make it redcap variable name compatible (lowercase letters, numbers, underscores only, <= 100 chars)
