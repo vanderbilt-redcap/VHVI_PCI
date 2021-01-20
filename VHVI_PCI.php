@@ -104,19 +104,22 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		
 		$returnStatus .= "<span>Detected " . ($lastRow - $header_row) . " rows of patient data.</span><br>";
 		
+		$record_data = [];
 		// for ($row_i = ($header_row + 1); $row_i <= $lastRow; $row_i++) {
-		for ($row_i = ($header_row + 1); $row_i <= ($header_row + 100); $row_i++) {
+		for ($row_i = ($header_row + 1); $row_i <= ($header_row + 1000); $row_i++) {
 			$returnStatus .= "Processing row $row_i: ";
 			$row_data = $this->sheet->rangeToArray("A$row_i:$last_col$row_i")[0];
 			
 			// fieldify row data
-			$record = $this->rowToPatientData($row_data);
+			$record_data[] = $this->rowToPatientData($row_data);
 			
 			// save
-			$returnStatus .= $this->savePatientData($record);
+			// $returnStatus .= $this->savePatientData($record);
 		}
 		
-		$returnStatus .= "<br><h6>Finished processing workbook.</h6><br>";
+		$results = \REDCap::saveData($this->pid, 'json', json_encode($record_data));
+		
+		$returnStatus .= "<br><h6>Finished processing workbook</h6><br>";
 		
 		return $returnStatus;
 	}
