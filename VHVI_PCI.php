@@ -45,6 +45,7 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		$this->vhvi_field_names = \REDCap::getFieldNames();
 	}
 	
+	// returns null on success, error message string on failure
 	function getFileUploadErrors($name) {
 		$errors = [];
 		if (empty($_FILES[$name])) {
@@ -79,7 +80,7 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		}
 	}
 	
-	// returns nothing on success, error message string on failure
+	// returns null on success, error message string on failure
 	// on success: properties 'workbook', 'reader', and 'sheet' get set
 	function loadCathPCIWorkbook($workbook_filepath) {
 		// ensure filename for workbook passed in exists
@@ -117,17 +118,189 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		$this->sheet = $this->workbook->getActiveSheet();
 	}
 	
-	// process rows in first worksheet, creating or updating patient records as needed
-	// returns status string
+	// returns null on success, error message string on failure
+	function buildFieldMap() {
+		if (empty($this->vhvi_field_names)) {
+			return $this->module_name . " can't build column-field map for workbook until project field names are cached.";
+		}
+		
+		$header_row = $this->header_row_index;
+		$last_col = $this->last_column_letters;
+		$header_row_data = $this->sheet->rangeToArray("A$header_row:$last_col$header_row")[0];
+		
+		$this->column_names = [];
+		$this->field_map = [];
+		$this->fields_mapped = 0;
+		foreach ($header_row_data as $col_index => $field_name) {
+			if (empty($field_name)) {
+				break;
+			}
+			
+			$this->column_names[$col_index] = $field_name;
+			
+			// convert column name to what the REDCap variable name would be
+			$rc_field_name = $this->convertVariableName($field_name);
+			
+			// set field_map slot if applicable
+			if (in_array($rc_field_name, $this->vhvi_field_names, true)) {
+				$this->field_map[$col_index] = $rc_field_name;
+				$this->fields_mapped++;
+			} else {
+				// the module is designed to handle field_map being a sparse array
+			}
+		}
+		
+		if (empty($this->field_map)) {
+			return $this->module_name . " was unable to build a map of column names to REDCap project variable names because none of the expected column names were present.";
+		}
+	}
+	
+	// returns integer on success, error message string on failure
+	function getChunkCount() {
+		if (empty($this->sheet)) {
+			return $this->module_name . " can't count worksheet chunks to database until a CathPCI workbook is successfully loaded.";
+		}
+		
+		$chunk_size = 100;
+		$lastRow = $this->sheet->getHighestRow();
+		$firstRow = $this->header_row_index + 1;
+		$chunkCount = ceil(($lastRow - $firstRow) / $chunk_size);
+		
+		if ($chunkCount == 0) {
+			return $this->module_name . " found no patient data rows in the uploaded CathPCI workbook.";
+		} else {
+			return $chunkCount;
+		}
+	}
+	
+	// returns table (html)
+	function printFieldMapTable() {
+		if (empty($this->field_map)) {
+			throw new \Exception("VHVI PCI module can't print column-field comparison table for workbook until the column-field map is created.");
+		}
+		$table = "<table>
+			<thead>
+				<tr>
+					<th>Column Label</th>
+					<th>REDCap Variable</th>
+				</tr>
+			</thead>
+			<tbody>";
+	
+		foreach ($this->column_names as $index => $col_label) {
+			$rc_variable = $this->field_map[$index];
+			$classtxt = (empty($rc_variable)) ? " class='missing-field'" : '';
+			
+			$table .= "<tr>
+					<td$classtxt>$col_label</td>
+					<td$classtxt>$rc_variable</td>
+				</tr>";
+		}
+	
+			$table .= "	</tbody>
+		</table><br>";
+		
+		return $table;
+	}
+	
+	// returns object, takes array as argument
+	// converts a given row of wb data to a record-like object (acceptable to saveData)
+	function rowToPatientData(&$row_data) {
+		// create record object
+		$new_patient_record = new \stdClass();
+		
+		// use row cell values to fill record object in preparation for saveData call
+		$new_patient_record->{$this->getRecordIdField()} = $this->getAvailableRecordId();
+		foreach ($this->field_map as $col_index => $rc_var_name) {
+			$new_patient_record->$rc_var_name = $row_data[$col_index];
+		}
+		return $new_patient_record;
+	}
+	
+	// returns string
+	// take a column name and make it redcap variable name compatible (lowercase letters, numbers, underscores only, <= 100 chars)
+	function convertVariableName($cathpci_var_name) {
+		// 1 lower case
+		$rc_var = strtolower($cathpci_var_name);
+		
+		// 2 encode <=, > to le, gt
+		$rc_var = str_replace("<=", "le", $rc_var);
+		$rc_var = str_replace(">", "gt", $rc_var);
+		
+		// 3 replace non-alphanumeric with underscore
+		$rc_var = preg_replace('/[^[:digit:][:lower:]]/', '_', $rc_var);
+		$rc_var = preg_replace('/_+/', '_', $rc_var);
+		
+		// 4 compress specific substrings
+		$rc_var = str_replace($this->longVarSubstrings, $this->shortVarSubstrings, $rc_var);
+		
+		// 5 trim underscores
+		$rc_var = trim($rc_var, '_');
+		
+		// 6 truncate to 26 chars
+		$rc_var = substr($rc_var, 0, 26);
+		
+		return $rc_var;
+	}
+	
+	// returns integer
+	function getAvailableRecordId() {
+		if (empty($this->current_max_record)) {
+			$rid_field_name = $this->getRecordIdField();
+			$pid = $this->pid;
+			$q = db_query("SELECT MAX(CAST(value AS SIGNED)) AS max_record FROM redcap_data WHERE project_id='$pid' AND field_name='$rid_field_name'");
+			$result = db_fetch_assoc($q);
+			$max_record = $result['max_record'];
+			if (empty($max_record)) {
+				$this->current_max_record = '1';
+			} else {
+				$this->current_max_record = $max_record + 1;
+			}
+		} else {
+			$this->current_max_record++;
+		}
+		
+		return $this->current_max_record;
+	}
+	
+	// returns string
+	function generateImportID() {
+		// generate import ID
+		$id = "";
+		$letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
+		$length = strlen($letters);
+		for ($i = 0; $i < 32; $i++) {
+			$id .= $letters[mt_rand(0, $length - 1)];
+		}
+		return $id;
+	}
+	
+	// returns null
+	function llog($text) {
+		// allows only local (not test/prod) logging
+		if (!file_exists($this->getModulePath() . 'able_test.php')) {
+			return;
+		}
+		
+		// create new file first time this is run, then append for additional calls
+		if (isset($this->ran_llog)) {
+			file_put_contents("C:/vumc/log.txt", "$text\n", FILE_APPEND);
+		} else {
+			$this->ran_llog = true;
+			file_put_contents("C:/vumc/log.txt", "VHVI_PCI llog created: " . date('c') . "\n$text\n");
+		}
+	}
+	
+	// process rows in $this->sheet, creating (and saving to module log table) a field_map, and row_data chunks (of 100)
+	// returns nothing on success, error message string on failure
 	function processWorkbook() {
 		$header_row = $this->header_row_index;
 		$last_col = $this->last_column_letters;
 		$returnStatus = "<h6>Beginning CathPCI workbook import process.</h6><br>";
 		
 		// build column-field map
-		$column_name_row_data = $this->sheet->rangeToArray("A$header_row:$last_col$header_row")[0];
 		$returnStatus .= "<span>Building field map.</span><br><br>";
-		$this->buildColumnFieldMap($column_name_row_data);
+		$this->buildFieldMap();
 		
 		// print table showing column to field map
 		// $returnStatus .= $this->printFieldMapTable();
@@ -181,147 +354,4 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		return $returnStatus;
 	}
 	
-	// returns status string
-	function buildColumnFieldMap($header_row_data) {
-		if (empty($this->vhvi_field_names)) {
-			throw new \Exception("VHVI PCI module can't build column-field map for workbook until project field names are cached.");
-		}
-		
-		$this->column_names = [];
-		$this->field_map = [];
-		$this->fields_mapped = 0;
-		foreach ($header_row_data as $col_index => $field_name) {
-			if (empty($field_name)) {
-				break;
-			}
-			
-			$this->column_names[$col_index] = $field_name;
-			
-			// convert column name to what the REDCap variable name would be
-			$rc_field_name = $this->convertVariableName($field_name);
-			
-			// set field_map slot if applicable
-			if (in_array($rc_field_name, $this->vhvi_field_names, true)) {
-				$this->field_map[$col_index] = $rc_field_name;
-				$this->fields_mapped++;
-			} else {
-				// the module is designed to handle field_map being a sparse array
-			}
-		}
-		
-		if (empty($this->field_map)) {
-			throw new \Exception("VHVI PCI was unable to build a map of column names to REDCap project variable names because none of the expected column names were present.");
-		}
-	}
-	
-	function printFieldMapTable() {
-		if (empty($this->field_map)) {
-			throw new \Exception("VHVI PCI module can't print column-field comparison table for workbook until the column-field map is created.");
-		}
-		$table = "<table>
-	<thead>
-		<tr>
-			<th>Column Label</th>
-			<th>REDCap Variable</th>
-		</tr>
-	</thead>
-	<tbody>";
-	
-	foreach ($this->column_names as $index => $col_label) {
-		$rc_variable = $this->field_map[$index];
-		$classtxt = (empty($rc_variable)) ? " class='missing-field'" : '';
-		
-		$table .= "<tr>
-			<td$classtxt>$col_label</td>
-			<td$classtxt>$rc_variable</td>
-		</tr>";
-	}
-	
-	$table .= "	</tbody>
-</table><br>";
-		
-		return $table;
-	}
-	
-	function rowToPatientData(&$row_data) {
-		// create record object
-		$new_patient_record = new \stdClass();
-		
-		// use row cell values to fill record object in preparation for saveData call
-		$new_patient_record->{$this->getRecordIdField()} = $this->getAvailableRecordId();
-		foreach ($this->field_map as $col_index => $rc_var_name) {
-			$new_patient_record->$rc_var_name = $row_data[$col_index];
-		}
-		return $new_patient_record;
-	}
-	
-	// creates new record, saves to db by prepared INSERT statement
-	function savePatientData($patient_data) {
-		$results = \REDCap::saveData($this->pid, 'json', json_encode([$patient_data]));
-		if (!empty($results['errors'])) {
-			$errs = implode(' ', $results['errors']);
-			return "\tREDCap FAILED to save row data to a new record. Errors: " . print_r($errs, true) . "<br>";
-		} else {
-			return "\tREDCap saved row data to new record. Record ID: " . $patient_data->{$this->getRecordIdField()} . "<br>";
-		}
-	}
-	
-	// take a column name and make it redcap variable name compatible (lowercase letters, numbers, underscores only, <= 100 chars)
-	function convertVariableName($cathpci_var_name) {
-		// 1 lower case
-		$rc_var = strtolower($cathpci_var_name);
-		
-		// 2 encode <=, > to le, gt
-		$rc_var = str_replace("<=", "le", $rc_var);
-		$rc_var = str_replace(">", "gt", $rc_var);
-		
-		// 3 replace non-alphanumeric with underscore
-		$rc_var = preg_replace('/[^[:digit:][:lower:]]/', '_', $rc_var);
-		$rc_var = preg_replace('/_+/', '_', $rc_var);
-		
-		// 4 compress specific substrings
-		$rc_var = str_replace($this->longVarSubstrings, $this->shortVarSubstrings, $rc_var);
-		
-		// 5 trim underscores
-		$rc_var = trim($rc_var, '_');
-		
-		// 6 truncate to 26 chars
-		$rc_var = substr($rc_var, 0, 26);
-		
-		return $rc_var;
-	}
-	
-	function getAvailableRecordId() {
-		if (empty($this->current_max_record)) {
-			$rid_field_name = $this->getRecordIdField();
-			$pid = $this->pid;
-			$q = db_query("SELECT MAX(CAST(value AS SIGNED)) AS max_record FROM redcap_data WHERE project_id='$pid' AND field_name='$rid_field_name'");
-			$result = db_fetch_assoc($q);
-			$max_record = $result['max_record'];
-			if (empty($max_record)) {
-				$this->current_max_record = '1';
-			} else {
-				$this->current_max_record = $max_record + 1;
-			}
-		} else {
-			$this->current_max_record++;
-		}
-		
-		return $this->current_max_record;
-	}
-	
-	function llog($text) {
-		// allows only local (not test/prod) logging
-		if (!file_exists($this->getModulePath() . 'able_test.php')) {
-			return;
-		}
-		
-		// create new file first time this is run, then append for additional calls
-		if (isset($this->ran_llog)) {
-			file_put_contents("C:/vumc/log.txt", "$text\n", FILE_APPEND);
-		} else {
-			$this->ran_llog = true;
-			file_put_contents("C:/vumc/log.txt", "VHVI_PCI llog created: " . date('c') . "\n$text\n");
-		}
-	}
 }
