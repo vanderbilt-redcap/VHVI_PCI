@@ -3,6 +3,7 @@ namespace Vanderbilt\VHVI_PCI;
 
 require('vendor/autoload.php');
 class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
+	private $module_name = "VHVI PCI module";
 	
 	private $longVarSubstrings = [
 		'health_insurance_payment_source',
@@ -44,17 +45,53 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		$this->vhvi_field_names = \REDCap::getFieldNames();
 	}
 	
-	// returns nothing, loads workbook property (or throw exception)
+	function getFileUploadErrors($name) {
+		$errors = [];
+		if (empty($_FILES[$name])) {
+			$errors[] = "Couldn't find uploaded file '$name'";
+		}
+		if (!empty($_FILES[$name]['error'])) {
+			$phpFileUploadErrors = [
+				0 => 'There is no error, the file uploaded with success',
+				1 => 'The uploaded file exceeds the upload_max_filesize directive in php.ini',
+				2 => 'The uploaded file exceeds the MAX_FILE_SIZE directive that was specified in the HTML form',
+				3 => 'The uploaded file was only partially uploaded',
+				4 => 'No file was uploaded',
+				6 => 'Missing a temporary folder',
+				7 => 'Failed to write file to disk.',
+				8 => 'A PHP extension stopped the file upload.',
+			];
+			$err_enum = $_FILES[$name]['error'];
+			$err_text = $phpFileUploadErrors[$err_enum];
+			$errors[] = "PHP experienced an error while uploading '$name': $err_text";
+		}
+		if (preg_match("/[^A-Za-z0-9. ()-]/", $_FILES["workbook"]["name"])) {
+			$errors[] = "File names can only contain alphabet, digit, period, space, hyphen, and parentheses characters.";
+			$errors[] = "	Allowed characters: A-Z a-z 0-9 . ( ) -";
+		}
+		if (strlen($_FILES["workbook"]["name"]) > 127) {
+			$errors[] = "Uploaded file has a name that exceeds the limit of 127 characters.";
+		}
+		
+		// return
+		if (!empty($errors)) {
+			return $errors;
+		}
+	}
+	
+	// returns nothing on success, error message string on failure
+	// on success: properties 'workbook', 'reader', and 'sheet' get set
 	function loadCathPCIWorkbook($workbook_filepath) {
 		// ensure filename for workbook passed in exists
 		if (!file_exists($workbook_filepath)) {
-			throw new \Exception("Tried to create a CathPCI instance from non-existing file at: '$workbook_filepath'");
+			return "Tried to create a CathPCI instance from non-existing file at: '$workbook_filepath'";
 		}
 		
 		// create PHPSpreadsheet reader
-		$reader = \PhpOffice\PhpSpreadsheet\IOFactory::createReader("Xlsx");
-		if (get_class($reader) != 'PhpOffice\PhpSpreadsheet\Reader\Xlsx') {
-			throw new \Exception("VHVI_PCI module failed to create PHPSpreadsheet reader object");
+		try {
+			$reader = \PhpOffice\PhpSpreadsheet\IOFactory::createReader("Xlsx");
+		} catch(\PhpOffice\PhpSpreadsheet\Reader\Exception $e) {
+			return "VHVI_PCI module failed to create PHPSpreadsheet reader object: " . $e->getMessage();
 		}
 		
 		// set to read data only (ignore formatting etc)
@@ -64,18 +101,19 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		try {
 			$this->workbook = $reader->load($workbook_filepath);
 		} catch(\PhpOffice\PhpSpreadsheet\Reader\Exception $e) {
-			throw new \Exception("Error loading CathPCI workbook from filename '$workbook_filepath': " . $e->getMessage());
+			return "Error loading CathPCI workbook from filename '$workbook_filepath': " . $e->getMessage();
 		}
 		
 		if (!$this->workbook) {
-			throw new \Exception("Failed to create CathPCI workbook object");
+			return "Failed to create CathPCI workbook object";
 		}
 		if (get_class($this->workbook) != "PhpOffice\PhpSpreadsheet\Spreadsheet") {
-			throw new \Exception("Failed to properly create CathPCI workbook object");
+			return "Failed to properly create CathPCI workbook object";
 		}
 		$this->workbook->setActiveSheetIndex(0);
 		
 		// set active sheet to first worksheet in workbook
+		$this->reader = $reader;
 		$this->sheet = $this->workbook->getActiveSheet();
 	}
 	
@@ -104,21 +142,40 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		
 		$returnStatus .= "<span>Detected " . ($lastRow - $header_row) . " rows of patient data.</span><br>";
 		
+		
+		// // iterate one row at a time
+		// // for ($row_i = ($header_row + 1); $row_i <= $lastRow; $row_i++) {
+		// for ($row_i = ($header_row + 1); $row_i <= ($header_row + 10); $row_i++) {
+			// // $returnStatus .= "Processing row $row_i: ";
+			// $row_data = $this->sheet->rangeToArray("A$row_i:$last_col$row_i")[0];
+			
+			// // fieldify row data
+			// $record_data[] = $this->rowToPatientData($row_data);
+			
+			// // save
+			// // $returnStatus .= $this->savePatientData($record);
+		// }
+		
+		// grab all data at once
+		$all_row_data = $this->sheet->rangeToArray("A" . ($header_row + 1) . ":$last_col" . ($lastRow));
+		// $all_row_data = $this->sheet->rangeToArray("A" . ($header_row + 1) . ":$last_col" . ($header_row + 50));
+		unset($this->reader);
+		unset($this->sheet);
+		
+		// convert each row to (record) object so we can json_encode and then saveData
 		$record_data = [];
-		// for ($row_i = ($header_row + 1); $row_i <= $lastRow; $row_i++) {
-		for ($row_i = ($header_row + 1); $row_i <= ($header_row + 1000); $row_i++) {
-			$returnStatus .= "Processing row $row_i: ";
-			$row_data = $this->sheet->rangeToArray("A$row_i:$last_col$row_i")[0];
-			
-			// fieldify row data
-			$record_data[] = $this->rowToPatientData($row_data);
-			
-			// save
-			// $returnStatus .= $this->savePatientData($record);
+		$before = memory_get_usage();
+		foreach ($all_row_data as $i => $row) {
+			$record_data[] = $this->rowToPatientData($row);
 		}
+		$after = memory_get_usage();
+		$returnStatus .= "<span>Record Data array size: " . ($after - $before) . "</span><br>";
 		
-		$results = \REDCap::saveData($this->pid, 'json', json_encode($record_data));
+		$returnStatus .= "<span>Processed " . count($record_data) . " rows</span><br>";
+		$returnStatus .= "<span>Processed " . count($record_data) . " rows</span><br>";
+		file_put_contents("C:/vumc/rec_data", json_encode($record_data));
 		
+		// $results = \REDCap::saveData($this->pid, 'json', json_encode($record_data));
 		$returnStatus .= "<br><h6>Finished processing workbook</h6><br>";
 		
 		return $returnStatus;
@@ -240,7 +297,6 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 			$pid = $this->pid;
 			$q = db_query("SELECT MAX(CAST(value AS SIGNED)) AS max_record FROM redcap_data WHERE project_id='$pid' AND field_name='$rid_field_name'");
 			$result = db_fetch_assoc($q);
-			echo "result: " . print_r($result, true) . "<br>";
 			$max_record = $result['max_record'];
 			if (empty($max_record)) {
 				$this->current_max_record = '1';

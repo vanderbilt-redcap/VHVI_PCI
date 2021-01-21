@@ -1,14 +1,10 @@
 <?php
 require_once APP_PATH_DOCROOT . 'ProjectGeneral/header.php';
-
-$module->llog("catpci_import.php");
 $module->llog("\$_GET:\n" . print_r($_GET, true));
 $module->llog("\$_POST:\n" . print_r($_POST, true));
 $module->llog("\$_FILES:\n" . print_r($_FILES, true));
 
-?>
-
-<?php if (!isset($_POST['submit'])) { ?>
+if (!isset($_POST['submit'])) { ?>
 <div id="container">
 	<form method="post" enctype="multipart/form-data">
 		<span>Select a CathPCI workbook to upload:<span>
@@ -18,24 +14,25 @@ $module->llog("\$_FILES:\n" . print_r($_FILES, true));
 		<input type="submit" value="Upload" name="submit">
 	</form>
 </div>
-<?php } else { 
-	require 'vendor/autoload.php';
-	try {
-		$reader = \PhpOffice\PhpSpreadsheet\IOFactory::createReader("Xlsx");
-		$workbook = $reader->load($_FILES["cathpci_doc"]["tmp_name"]);
-	} catch(\PhpOffice\PhpSpreadsheet\Reader\Exception $e) {
-		// \REDCap::logEvent("DPP import failure", "PhpSpreadsheet library errors -> " . print_r($e, true) . "\n", null, $rid, $eid, PROJECT_ID);
-		exit("There was an issue loading the CathPCI workbook: $e");
-	}
-	$workbook_loaded = true;
-?>
-<span>Imported workbook</span>
-<br>
-<?php 
-	if ($workbook_loaded) {
-		echo "<span>Workbook loaded successfully</span>";
-	}
-} ?>
 <?php
-require_once APP_PATH_DOCROOT . 'ProjectGeneral/footer.php';
+} else {
+	// check for upload errors
+	$upload_errors = $module->getFileUploadErrors('cathpci_doc');
+	
+	if (!empty($upload_errors)) {
+		echo "<span>CathPCI workbook failed to upload to REDCap. See errors:</span><br>";
+		exit(implode("<br>", $upload_errors));
+	} else {
+		echo "<span>CathPCI workbook uploaded successfully.</span><br>";
+	}
+	
+	// attempt to load CathPCI workbook
+	$err = $module->loadCathPCIWorkbook($_FILES['cathpci_doc']['tmp_name']);
+	if (!empty($err)) {
+		exit("<span>The file uploaded successfully but the {$module->module_name} was not able to extract patient data from the file.</span><br><span>Error message: $err</span>");
+	}
+	
+	
+	require_once APP_PATH_DOCROOT . 'ProjectGeneral/footer.php';
+}
 ?>
