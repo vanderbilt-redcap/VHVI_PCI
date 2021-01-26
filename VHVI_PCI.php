@@ -33,6 +33,19 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		'int_type',
 	];
 	
+	private $import_info_fields = [
+		'id',
+		'upload_errors',
+		'wb_path',
+		'wb_load_error',
+		'field_map_build_error',
+		'field_map',
+		'column_names',
+		'fields_mapped',
+		'chunk_count_error',
+		'chunk_count'
+	];
+	
 	private $header_row_index = 4;
 	private $last_column_letters = "MF";
 	
@@ -42,7 +55,8 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		$this->pid = $this->getProjectId();
 		
 		// cache project field names
-		$this->vhvi_field_names = \REDCap::getFieldNames();
+		if (!empty($this->pid))
+			$this->vhvi_field_names = \REDCap::getFieldNames();
 	}
 	
 	// returns null on success, error message string on failure
@@ -166,7 +180,7 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		$firstRow = $this->header_row_index + 1;
 		$chunkCount = ceil(($lastRow - $firstRow) / $chunk_size);
 		
-		if ($chunkCount == 0) {
+		if ($chunkCount <= 0) {
 			return $this->module_name . " found no patient data rows in the uploaded CathPCI workbook.";
 		} else {
 			return $chunkCount;
@@ -174,15 +188,18 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 	}
 	
 	// returns table (html)
-	function printFieldMapTable() {
+	function getFieldMapHTMLTable() {
 		if (empty($this->field_map)) {
 			throw new \Exception("VHVI PCI module can't print column-field comparison table for workbook until the column-field map is created.");
 		}
-		$table = "<table>
+		$table = "<div id='field_map' style='display: none;'>
+		<br><span>White indicates variable found in REDCap project</span><br>
+		<span>Yellow indicates variable not found in this REDCap project</span><br>
+		<table>
 			<thead>
 				<tr>
-					<th>Column Label</th>
-					<th>REDCap Variable</th>
+					<th>CathPCI Worksheet Column Name</th>
+					<th>Converted to REDCap Variable Name</th>
 				</tr>
 			</thead>
 			<tbody>";
@@ -198,9 +215,47 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		}
 	
 			$table .= "	</tbody>
-		</table><br>";
+		</table></div>";
 		
 		return $table;
+	}
+	
+	// returns bool and string
+	// true and import result information string
+	// or false and error message string
+	function importChunk() {
+		$import_id = $_POST['import_id'];
+		$chunk_i = $_POST['which_chunk'];
+		if (empty($chunk_i) or empty($import_id)) {
+			return [false, "request missing valid which_chunk or import_id"];
+		}
+		
+		// get import info
+		$import_info_field_string = implode(', ', $this->import_info_fields);
+		$result = $this->queryLogs("SELECT $import_info_field_string WHERE id = ?", [
+			$import_id
+		]);
+		$import_info = db_fetch_assoc($result);
+		
+		// check for existing errors
+		if (!empty($import_info['upload_errors'])) {
+			return [false, "Can't import chunk because the workbook uploaded incorrectly"];
+		}
+		if (!empty($import_info['wb_load_error'])) {
+			return [false, "Can't import chunk because the workbook loaded incorrectly"];
+		}
+		if (!empty($import_info['field_map_build_error'])) {
+			return [false, "Can't import chunk because the module couldn't build a field map"];
+		}
+		if (!empty($import_info['chunk_count_error'])) {
+			return [false, "Can't import chunk because the module couldn't count how many row chunks to import"];
+		}
+		
+		// validate previously imported workbook's filepath
+		$wb_path = $import_info['wb_path'];
+		if (empty($wb_path)) {
+			return [false, "request missing valid which_chunk or import_id"];
+		}
 	}
 	
 	// returns object, takes array as argument

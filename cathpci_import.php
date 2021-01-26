@@ -55,6 +55,10 @@ if (!isset($_POST['submit'])) { ?>
 	$import_info['column_names'] = json_encode($module->column_names);
 	$import_info['fields_mapped'] = $module->fields_mapped;
 	
+	// allow admins to show/hide field mapping table
+	$field_map_html_table = $module->getFieldMapHTMLTable();
+	echo "<br><button id='toggle_field_map' onclick='$(\"#field_map\").toggle()'>Toggle Field Map Table</button><br>$field_map_html_table<br>";
+	
 	// count chunks
 	$chunk_count = $module->getChunkCount();
 	if (!is_numeric($chunk_count)) {
@@ -62,20 +66,36 @@ if (!isset($_POST['submit'])) { ?>
 		$module->log('import_info', $import_info);
 		exit("<span>$chunk_count</span>");
 	} else {
-		echo "<span>Counted $chunk_count chunks (of 100 rows each) in uploaded CathPCI workbook.</span><br>";
+		echo "<span>Counted $chunk_count chunks (maximum of 100 rows in each chunk) in uploaded CathPCI workbook.</span><br>";
 	}
 	$import_info['chunk_count'] = $chunk_count;
 	$module->log('import_info', $import_info);
+	
+	echo "<br><h6>Import Results Table</h6>
+	<table id='import_results'>
+		<thead>
+			<tr>
+				<th>Row #</th>
+				<th>New Record ID</th>
+				<th>Import Result</th>
+			</tr>
+		</thead>
+		<tbody>
+		</tbody>
+	</table>";
 	
 	require_once APP_PATH_DOCROOT . 'ProjectGeneral/footer.php';
 	?>
 	<script type='text/javascript'>
 		<?= "var CathPCI = {
 			import_id: '" . $import_info['id'] . "',
-			chunk_count: $chunk_count
+			chunk_count: $chunk_count,
+			import_chunk_url: '" . $module->getUrl('cathpci_import_ajax.php') . "',
+			import_css_url: '" . $module->getUrl('css/import.css') . "'
 		};"; ?>
 	</script>
 	<script type='text/javascript' src='<?= $module->getUrl('js/import.js'); ?>'></script>
+	<script type='text/javascript' src='//cdn.datatables.net/1.10.23/js/jquery.dataTables.min.js'></script>
 <?php
 }
 ?>
