@@ -75,8 +75,7 @@ if (!isset($_POST['submit'])) { ?>
 	<table id='import_results'>
 		<thead>
 			<tr>
-				<th>Row #</th>
-				<th>New Record ID</th>
+				<th>Chunk #</th>
 				<th>Import Result</th>
 			</tr>
 		</thead>

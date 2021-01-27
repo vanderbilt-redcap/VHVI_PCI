@@ -41,11 +41,30 @@ if (typeof CathPCI != 'undefined') {
 		$('div.chunk_loading').remove()
 	}
 	CathPCI.receivedImportResponse = function(response) {
-		this.response = response
+		CathPCI.response = response
 		console.log('response', response)
 		
-		this.chunks_loaded = this.chunks_loaded + 1
-		$('div#center').append("<p>Receieved response for importing first chunk</p>")
+		// prepare chunk import message table row
+		var row_class = response.success ? 'success' : 'failure';
+		var import_message = "All rows in chunk imported successfully";
+		if (row_class == 'failure') {
+			import_message = "Chunk failed to import";
+			if (typeof(response.msg.errors) == 'array') {
+				import_message += ": " + response.msg.errors.join();
+			}
+		}
+		
+		// add chunk import message to table
+		CathPCI.chunks_loaded = CathPCI.chunks_loaded + 1
+		// debugger;
+		CathPCI.import_results_dt.row.add([CathPCI.chunks_loaded, import_message]).draw();
+		// $("table#import_results tbody").append("<tr><td class='" + row_class + "'>" + CathPCI.chunks_loaded + "</td><td></td></tr>");
+		
+		if (CathPCI.chunks_loaded < CathPCI.chunk_count) {
+			CathPCI.askServerToImportNextChunk();
+		} else {
+			console.log("CathPCI.chunks_loaded == CathPCI.chunk_count");
+		}
 	}
 }
 

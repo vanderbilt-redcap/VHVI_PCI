@@ -227,7 +227,11 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		$import_id = $_POST['import_id'];
 		$chunk_i = $_POST['which_chunk'];
 		if (empty($chunk_i) or empty($import_id)) {
-			return [false, "request missing valid which_chunk or import_id"];
+			return [false, "Can't import chunk: request missing valid which_chunk or import_id"];
+		}
+		$chunk_i = intval($chunk_i);
+		if ($chunk_i < 1) {
+			return [false, "Can't import chunk: request chunk index '$chunk_i' is less than 1"];
 		}
 		
 		// get import info
@@ -254,7 +258,33 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		// validate previously imported workbook's filepath
 		$wb_path = $import_info['wb_path'];
 		if (empty($wb_path)) {
-			return [false, "request missing valid which_chunk or import_id"];
+			return [false, "Can't import chunk: 'wb_path' missing from stored import information."];
+		}
+		
+		// load wb
+		$errmsg = $this->loadCathPCIWorkbook($wb_path);
+		if (!empty($errmsg)) {
+			return [false, "Can't import chunk -- error loading workbook: $errmsg"];
+		}
+		
+		// grab row data for this chunk
+		$first_row_i = $this->header_row_index + 1 + 100 * (intval($chunk_i));
+		$last_row_i = min($this->sheet->getHighestRow(), $first_row_i + 100);
+		
+		$chunk_row_data = $this->sheet->rangeToArray("A" . $first_row_i . ":" . $this->last_column_letters . $last_row_i);
+		
+		// convert row data to record data
+		$record_data = [];
+		foreach ($all_row_data as $i => $row) {
+			$record_data[] = $this->rowToPatientData($row);
+		}
+		
+		// save data and get results
+		$results = \REDCap::saveData($this->pid, 'json', json_encode($record_data));
+		if (empty($results['errors'])) {
+			return [false, json_encode($results)];
+		} else {
+			return [true, json_encode($results)];
 		}
 	}
 	
