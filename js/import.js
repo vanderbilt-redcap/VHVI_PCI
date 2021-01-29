@@ -1,8 +1,11 @@
-
 if (typeof CathPCI != 'undefined') {
 	// make datatables
-	CathPCI.field_map_dt = $('#field_map table').DataTable();
-	CathPCI.import_results_dt = $('table#import_results').DataTable();
+	CathPCI.field_map_dt = $('#field_map table').DataTable({
+		pageLength: 25
+	});
+	CathPCI.import_results_dt = $('table#import_results').DataTable({
+		pageLength: 25
+	});
 	
 	CathPCI.init = function() {
 		this.chunks_loaded = 0;
@@ -13,7 +16,6 @@ if (typeof CathPCI != 'undefined') {
 	CathPCI.askServerToImportNextChunk = function() {
 		var next_chunk_index = this.chunks_loaded + 1;
 		console.log('asking server to import chunk #' + next_chunk_index);
-		console.log('sending request to: ' + this.import_chunk_url);
 		
 		this.addLoadingMessage();
 		
@@ -28,21 +30,32 @@ if (typeof CathPCI != 'undefined') {
 		
 		jqxhr.done(this.receivedImportResponse);
 		jqxhr.fail(function(response) {
-			this.response = response
-			console.log('fail response', response)
-			$('div#center').append("<br><span>An error has occurred while importing the next chunk. Please contact the maintainer for this module.</span><br><p>" + data + "</p>")
+			CathPCI.removeLoadingMessage();
+			CathPCI.response = response
+			$('div#center').append("<br><span>An error has occurred while importing the next chunk. Please contact the maintainer for this module.</span><br><p>" + response + "</p>")
 		});
-		jqxhr.always(this.removeLoadingMessage);
 	}
 	CathPCI.addLoadingMessage = function() {
-		$('div#center').append("<div class='chunk_loading'><span>Importing next chunk of workbook rows...</span><div class='loader'></div></div>")
+		// console.log('adding loading message');
+		$('div#center').append("\
+		<div class='chunk_loading'>\
+			<div class='row card'>\
+				<div class='col-6'>\
+					<h6 class='card-title'>Importing next chunk of workbook rows...</h6>\
+					<div class='loader card-body'></div>\
+					<br>\
+					<span>Closing this window or tab will stop the import process</span>\
+				</div>\
+			</div>\
+		</div>")
 	}
 	CathPCI.removeLoadingMessage = function() {
+		// console.log('removing loading message');
 		$('div.chunk_loading').remove()
 	}
 	CathPCI.receivedImportResponse = function(response) {
+		CathPCI.removeLoadingMessage();
 		CathPCI.response = response
-		console.log('response', response)
 		
 		// prepare chunk import message table row
 		var row_class = response.success ? 'success' : 'failure';
@@ -56,9 +69,7 @@ if (typeof CathPCI != 'undefined') {
 		
 		// add chunk import message to table
 		CathPCI.chunks_loaded = CathPCI.chunks_loaded + 1
-		// debugger;
 		CathPCI.import_results_dt.row.add([CathPCI.chunks_loaded, import_message]).draw();
-		// $("table#import_results tbody").append("<tr><td class='" + row_class + "'>" + CathPCI.chunks_loaded + "</td><td></td></tr>");
 		
 		if (CathPCI.chunks_loaded < CathPCI.chunk_count) {
 			CathPCI.askServerToImportNextChunk();
@@ -69,7 +80,6 @@ if (typeof CathPCI != 'undefined') {
 }
 
 $(document).ready(function() {
-	
 	// append stylesheets
 	$('head').append('<link rel="stylesheet" type="text/css" href="' + CathPCI.import_css_url + '">');
 	$('head').append('<link rel="stylesheet" type="text/css" href="//cdn.datatables.net/1.10.23/css/jquery.dataTables.min.css">');

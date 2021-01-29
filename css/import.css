@@ -1,7 +1,7 @@
 /* field_map table styling */
-table, thead, tbody, tr, th, td {
-	border: 1px solid black;
-}
+/* table, thead, tbody, tr, th, td { */
+	/* border: 1px solid black; */
+/* } */
 td {
 	background-color: #ffffff;
 }
@@ -10,9 +10,6 @@ td:first-child.missing-field {
 }
 td:last-child.missing-field {
 	background-color: #f7f7b2;
-}
-#field_map {
-	width: 90%;
 }
 
 /* import chunk loading spinner */
@@ -27,4 +24,26 @@ td:last-child.missing-field {
 @keyframes spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
+}
+
+table {
+	width: 90%;
+	max-width: 90%;
+}
+
+.chunk_loading {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	text-align: center;
+}
+.chunk_loading > div{
+	width: 60%;
+}
+.chunk_loading div{
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	margin: 25px 0px 25px 0px;
 }

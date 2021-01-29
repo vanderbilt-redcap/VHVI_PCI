@@ -4,6 +4,13 @@ $module->llog("\$_GET:\n" . print_r($_GET, true));
 $module->llog("\$_POST:\n" . print_r($_POST, true));
 $module->llog("\$_FILES:\n" . print_r($_FILES, true));
 
+// ini_set('max_post_size', '0.001M');
+// ini_set('upload_max_filesize', '0.001M');
+$max_post_size = ini_get('post_max_size');
+$max_upload_size = ini_get('upload_max_filesize');
+$module->llog("max_post_size: $max_post_size");
+$module->llog("max_upload_size: $max_upload_size");
+
 if (!isset($_POST['submit'])) { ?>
 <div id="container">
 	<form method="post" enctype="multipart/form-data">
@@ -70,6 +77,21 @@ if (!isset($_POST['submit'])) { ?>
 	}
 	$import_info['chunk_count'] = $chunk_count;
 	$module->log('import_info', $import_info);
+	
+	// log chunk data
+	for ($chunk_index = 1; $chunk_index <= $chunk_count; $chunk_index++) {
+		$first_row_i = $module->header_row_index + 1 + 100 * (intval($chunk_index) - 1);
+		$last_row_i = min($module->sheet->getHighestRow(), $first_row_i + 99);
+		
+		$chunk_row_data = $module->sheet->rangeToArray("A" . $first_row_i . ":" . $module->last_column_letters . $last_row_i);
+		// $module->llog("first_row_i: $first_row_i, last_row_i: $last_row_i -- chunk_row_data count: " . count($chunk_row_data));
+		
+		$log_id = $module->log('chunk_row_data', [
+			'chunk_index' => $chunk_index,
+			'import_id' => $import_info['id'],
+			'row_data' => json_encode($chunk_row_data)
+		]);
+	}
 	
 	echo "<br><h6>Import Results Table</h6>
 	<table id='import_results'>

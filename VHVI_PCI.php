@@ -46,8 +46,8 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		'chunk_count'
 	];
 	
-	private $header_row_index = 4;
-	private $last_column_letters = "MF";
+	public $header_row_index = 4;
+	public $last_column_letters = "MF";
 	
 	function __construct() {
 		parent::__construct();
@@ -241,51 +241,34 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		]);
 		$import_info = db_fetch_assoc($result);
 		
-		// check for existing errors
-		if (!empty($import_info['upload_errors'])) {
-			return [false, "Can't import chunk because the workbook uploaded incorrectly"];
-		}
-		if (!empty($import_info['wb_load_error'])) {
-			return [false, "Can't import chunk because the workbook loaded incorrectly"];
-		}
-		if (!empty($import_info['field_map_build_error'])) {
-			return [false, "Can't import chunk because the module couldn't build a field map"];
-		}
-		if (!empty($import_info['chunk_count_error'])) {
-			return [false, "Can't import chunk because the module couldn't count how many row chunks to import"];
-		}
+		// set field map for this module instance
+		$this->field_map = json_decode($import_info['field_map']);
 		
-		// validate previously imported workbook's filepath
-		$wb_path = $import_info['wb_path'];
-		if (empty($wb_path)) {
-			return [false, "Can't import chunk: 'wb_path' missing from stored import information."];
-		}
+		// get row_data for this chunk from module log table
+		$result = $this->queryLogs("SELECT row_data WHERE message = ? AND import_id = ? AND chunk_index = ?", [
+			'chunk_row_data',
+			$import_id,
+			$chunk_i
+		]);
+		$chunk_data = db_fetch_assoc($result)['row_data'];
+		$chunk_data = json_decode($chunk_data);
 		
-		// load wb
-		$errmsg = $this->loadCathPCIWorkbook($wb_path);
-		if (!empty($errmsg)) {
-			return [false, "Can't import chunk -- error loading workbook: $errmsg"];
-		}
-		
-		// grab row data for this chunk
-		$first_row_i = $this->header_row_index + 1 + 100 * (intval($chunk_i));
-		$last_row_i = min($this->sheet->getHighestRow(), $first_row_i + 100);
-		
-		$chunk_row_data = $this->sheet->rangeToArray("A" . $first_row_i . ":" . $this->last_column_letters . $last_row_i);
+		// delete chunk data from module log table
+		$this->removeLogs("message = ? AND import_id = ? AND chunk_index = ?", [
+			'chunk_row_data',
+			$import_id,
+			$chunk_i
+		]);
 		
 		// convert row data to record data
 		$record_data = [];
-		foreach ($all_row_data as $i => $row) {
+		foreach ($chunk_data as $i => $row) {
 			$record_data[] = $this->rowToPatientData($row);
 		}
 		
-		// save data and get results
+		// save data and return results
 		$results = \REDCap::saveData($this->pid, 'json', json_encode($record_data));
-		if (empty($results['errors'])) {
-			return [false, json_encode($results)];
-		} else {
-			return [true, json_encode($results)];
-		}
+		return [empty($results['errors']), json_encode($results)];
 	}
 	
 	// returns object, takes array as argument
@@ -303,7 +286,7 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 	}
 	
 	// returns string
-	// take a column name and make it redcap variable name compatible (lowercase letters, numbers, underscores only, <= 100 chars)
+	// take a column name and make it redcap variable name compatible (lowercase letters, numbers, underscores only, <= 26 chars)
 	function convertVariableName($cathpci_var_name) {
 		// 1 lower case
 		$rc_var = strtolower($cathpci_var_name);
@@ -368,75 +351,11 @@ class VHVI_PCI extends \ExternalModules\AbstractExternalModule {
 		}
 		
 		// create new file first time this is run, then append for additional calls
-		if (isset($this->ran_llog)) {
+		// if (isset($this->ran_llog)) {
 			file_put_contents("C:/vumc/log.txt", "$text\n", FILE_APPEND);
-		} else {
-			$this->ran_llog = true;
-			file_put_contents("C:/vumc/log.txt", "VHVI_PCI llog created: " . date('c') . "\n$text\n");
-		}
-	}
-	
-	// process rows in $this->sheet, creating (and saving to module log table) a field_map, and row_data chunks (of 100)
-	// returns nothing on success, error message string on failure
-	function processWorkbook() {
-		$header_row = $this->header_row_index;
-		$last_col = $this->last_column_letters;
-		$returnStatus = "<h6>Beginning CathPCI workbook import process.</h6><br>";
-		
-		// build column-field map
-		$returnStatus .= "<span>Building field map.</span><br><br>";
-		$this->buildFieldMap();
-		
-		// print table showing column to field map
-		// $returnStatus .= $this->printFieldMapTable();
-		
-		$lastRow = $this->sheet->getHighestRow();
-		if ($lastRow < $header_row) {
-			return "<span>CathPCI workbook import failure: Expected workbook to have at least $header_row rows on first sheet</span><br>";
-		}
-		if ($lastRow == $header_row) {
-			return "<span>CathPCI workbook import complete: Module detected no patient records</span><br>";
-		}
-		
-		$returnStatus .= "<span>Detected " . ($lastRow - $header_row) . " rows of patient data.</span><br>";
-		
-		
-		// // iterate one row at a time
-		// // for ($row_i = ($header_row + 1); $row_i <= $lastRow; $row_i++) {
-		// for ($row_i = ($header_row + 1); $row_i <= ($header_row + 10); $row_i++) {
-			// // $returnStatus .= "Processing row $row_i: ";
-			// $row_data = $this->sheet->rangeToArray("A$row_i:$last_col$row_i")[0];
-			
-			// // fieldify row data
-			// $record_data[] = $this->rowToPatientData($row_data);
-			
-			// // save
-			// // $returnStatus .= $this->savePatientData($record);
+		// } else {
+			// $this->ran_llog = true;
+			// file_put_contents("C:/vumc/log.txt", "VHVI_PCI llog created: " . date('c') . "\n$text\n");
 		// }
-		
-		// grab all data at once
-		$all_row_data = $this->sheet->rangeToArray("A" . ($header_row + 1) . ":$last_col" . ($lastRow));
-		// $all_row_data = $this->sheet->rangeToArray("A" . ($header_row + 1) . ":$last_col" . ($header_row + 50));
-		unset($this->reader);
-		unset($this->sheet);
-		
-		// convert each row to (record) object so we can json_encode and then saveData
-		$record_data = [];
-		$before = memory_get_usage();
-		foreach ($all_row_data as $i => $row) {
-			$record_data[] = $this->rowToPatientData($row);
-		}
-		$after = memory_get_usage();
-		$returnStatus .= "<span>Record Data array size: " . ($after - $before) . "</span><br>";
-		
-		$returnStatus .= "<span>Processed " . count($record_data) . " rows</span><br>";
-		$returnStatus .= "<span>Processed " . count($record_data) . " rows</span><br>";
-		file_put_contents("C:/vumc/rec_data", json_encode($record_data));
-		
-		// $results = \REDCap::saveData($this->pid, 'json', json_encode($record_data));
-		$returnStatus .= "<br><h6>Finished processing workbook</h6><br>";
-		
-		return $returnStatus;
 	}
-	
 }
